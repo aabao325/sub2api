@@ -410,6 +410,23 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 
 	MarkResponseCommitted(c)
 
+	// 400 通常是客户端请求本身有问题（如非法参数、内容审核、图片下载失败等），
+	// 不是网关/上游基础设施故障，应该把上游的真实状态码和错误信息透传给客户端，
+	// 而不是重包成通用的 502 "Upstream request failed"——那样会让客户端误以为
+	// 是网关故障从而重试，掩盖了本该由客户端自己修正的请求问题。
+	if resp.StatusCode == http.StatusBadRequest {
+		writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+		contentType := resp.Header.Get("Content-Type")
+		if contentType == "" {
+			contentType = "application/json"
+		}
+		c.Data(http.StatusBadRequest, contentType, body)
+		if upstreamMsg == "" {
+			return nil, fmt.Errorf("upstream error: %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("upstream error: %d message=%s", resp.StatusCode, upstreamMsg)
+	}
+
 	// Return appropriate error response
 	var errType, errMsg string
 	var statusCode int

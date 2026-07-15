@@ -17,7 +17,8 @@ backend/main
 
 # Go 测试二进制
 *.test
-
+.playwright-mcp
+docs
 # 测试覆盖率
 *.out
 coverage.html
@@ -135,6 +136,7 @@ docs/*
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
+!docs/GROK_API_APIFOX.yaml
 !docs/legal/
 !docs/legal/*.md
 .serena/

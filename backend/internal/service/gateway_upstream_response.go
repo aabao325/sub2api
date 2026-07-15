@@ -298,6 +298,13 @@ func extractUpstreamErrorMessage(body []byte) string {
 		return m
 	}
 
+	// xAI 风格：{"code": "...", "error": "<string>"}（顶层 error 直接是字符串，不是嵌套对象）
+	if errField := gjson.GetBytes(body, "error"); errField.Exists() && errField.Type == gjson.String {
+		if s := strings.TrimSpace(errField.String()); s != "" {
+			return s
+		}
+	}
+
 	// ChatGPT 内部 API 风格：{"detail":"..."}
 	if d := gjson.GetBytes(body, "detail").String(); strings.TrimSpace(d) != "" {
 		return d
@@ -313,16 +320,20 @@ func extractUpstreamErrorCode(body []byte) string {
 	}
 
 	inner := strings.TrimSpace(gjson.GetBytes(body, "error.message").String())
-	if !strings.HasPrefix(inner, "{") {
-		return ""
+	if strings.HasPrefix(inner, "{") {
+		if code := strings.TrimSpace(gjson.Get(inner, "error.code").String()); code != "" {
+			return code
+		}
+		if lastBrace := strings.LastIndex(inner, "}"); lastBrace >= 0 {
+			if code := strings.TrimSpace(gjson.Get(inner[:lastBrace+1], "error.code").String()); code != "" {
+				return code
+			}
+		}
 	}
 
-	if code := strings.TrimSpace(gjson.Get(inner, "error.code").String()); code != "" {
-		return code
-	}
-
-	if lastBrace := strings.LastIndex(inner, "}"); lastBrace >= 0 {
-		if code := strings.TrimSpace(gjson.Get(inner[:lastBrace+1], "error.code").String()); code != "" {
+	// xAI 风格：{"code": "...", "error": "<string>"}
+	if errField := gjson.GetBytes(body, "error"); errField.Exists() && errField.Type == gjson.String {
+		if code := strings.TrimSpace(gjson.GetBytes(body, "code").String()); code != "" {
 			return code
 		}
 	}

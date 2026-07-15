@@ -84,6 +84,7 @@ func RegisterGatewayRoutes(
 			},
 		})
 	}
+<<<<<<< Updated upstream
 	videoEditHandler := func(c *gin.Context) {
 		if getGroupPlatform(c) == service.PlatformGrok {
 			h.OpenAIGateway.GrokVideoEdit(c)
@@ -99,6 +100,23 @@ func RegisterGatewayRoutes(
 		}
 		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
 		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"type": "not_found_error", "message": "Videos API is not supported for this platform"}})
+=======
+	// videoContentHandler 对应 OpenAI/Sora 视频协议里的 GET /v1/videos/{id}/content。
+	// new-api 等中转程序把 sub2api 配置为 "Sora 渠道" 上游时，其任务适配器固定
+	// 会请求这个端点来下载生成完成的视频二进制内容。
+	videoContentHandler := func(c *gin.Context) {
+		if getGroupPlatform(c) == service.PlatformGrok {
+			h.OpenAIGateway.GrokVideoContent(c)
+			return
+		}
+		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": gin.H{
+				"type":    "not_found_error",
+				"message": "Videos API is not supported for this platform",
+			},
+		})
+>>>>>>> Stashed changes
 	}
 	// API网关（Claude API兼容）
 	gateway := r.Group("/v1")
@@ -204,6 +222,15 @@ func RegisterGatewayRoutes(
 		gateway.POST("/videos/edits", videoEditHandler)
 		gateway.POST("/videos/extensions", videoExtensionHandler)
 		gateway.GET("/videos/:request_id", videoStatusHandler)
+		// OpenAI/Sora 标准视频接口别名：new-api 等中转程序把渠道配置为 Sora/OpenAI
+		// 类型时，其任务适配器固定请求 POST {baseURL}/v1/videos 提交生成、
+		// GET {baseURL}/v1/videos/{id}/content 下载内容，而不是 /v1/videos/generations。
+		gateway.POST("/videos", videoGenerationHandler)
+		gateway.GET("/videos/:request_id/content", videoContentHandler)
+		// /v1/video/generations（单数 video）是部分中转程序（如 new-api）自身对外
+		// 暴露的旧版任务提交路径，这里一并支持，方便直接指向 sub2api 时也能命中。
+		gateway.POST("/video/generations", videoGenerationHandler)
+		gateway.GET("/video/generations/:request_id", videoStatusHandler)
 	}
 
 	// Gemini 原生 API 兼容层（Gemini SDK/CLI 直连）
@@ -273,6 +300,10 @@ func RegisterGatewayRoutes(
 	r.POST("/videos/edits", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, videoEditHandler)
 	r.POST("/videos/extensions", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, videoExtensionHandler)
 	r.GET("/videos/:request_id", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, videoStatusHandler)
+	r.POST("/videos", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, videoGenerationHandler)
+	r.GET("/videos/:request_id/content", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, videoContentHandler)
+	r.POST("/video/generations", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, videoGenerationHandler)
+	r.GET("/video/generations/:request_id", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, videoStatusHandler)
 
 	// Antigravity 模型列表
 	r.GET("/antigravity/models", gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, h.Gateway.AntigravityModels)

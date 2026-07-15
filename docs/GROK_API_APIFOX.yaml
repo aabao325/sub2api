@@ -1,0 +1,1480 @@
+openapi: 3.0.3
+info:
+  title: Grok (xAI) API
+  description: |
+    Grok 模型调用接口文档，兼容 OpenAI 协议风格。
+
+    ## 支持模型
+
+    ### 文本模型（Chat / Responses）
+    | 模型 ID | 说明 | 常用别名 |
+    | --- | --- | --- |
+    | `grok-4.5` | 旗舰对话模型 | `grok`、`grok-latest`、`grok-4.5-latest` |
+    | `grok-4.3` | 上一代对话模型 | - |
+    | `grok-build-0.1` | 代码/构建类模型，也用于图文理解 | `grok-build` |
+    | `grok-composer-2.5-fast` | 长文写作/合成模型（不支持 reasoning 相关参数） | `grok-composer`、`composer-2.5` |
+    | `grok-4.20-0309-reasoning` | 推理增强模型 | `grok-4.20-reasoning` |
+    | `grok-4.20-0309-non-reasoning` | 非推理（快速响应）模型 | `grok-4.20-non-reasoning` |
+    | `grok-4.20-multi-agent-0309` | 多智能体协作模型 | - |
+
+    ### 绘画模型（Images）
+    | 模型 ID | 说明 |
+    | --- | --- |
+    | `grok-imagine` | 通用文生图（自动映射为高质量版本 `grok-imagine-image-quality`） |
+    | `grok-imagine-image` | 快速文生图 |
+    | `grok-imagine-image-quality` | 高质量文生图 |
+    | `grok-imagine-edit` | 图片编辑（局部重绘/图生图/多图合成） |
+
+    ### 视频模型（Videos）
+    | 模型 ID | 说明 |
+    | --- | --- |
+    | `grok-imagine-video` | 文生视频 / 图生视频 / 参考图生视频（支持多图 `reference_images`） |
+    | `grok-imagine-video-1.5` | 视频模型 1.5：不带输入图片时按文生视频处理，带单张输入图片时用于图生视频；**不支持**多图参考（`reference_images`），若请求携带多图会自动降级为 `grok-imagine-video` |
+
+    视频模型同时支持 `sora-2`（映射到 `grok-imagine-video`）与 `sora-2-pro`
+    （映射到 `grok-imagine-video-1.5`）两个别名，方便直接把本服务配置成
+    new-api 等中转程序里的 "Sora" / "OpenAI" 渠道上游，无需额外做模型改名。
+    携带 `reference_images`（或等价的多图 `image`/`images`/`input_reference`
+    数组）时，无论指定的是 `grok-imagine-video-1.5` 还是 `sora-2-pro`，服务端
+    都会自动改用 `grok-imagine-video` 转发，避免触发上游的模型能力限制错误。
+
+    ## 接口与参数总览
+
+    ### 文本模型接口
+    | 能力 | Method | Path | 请求体 Content-Type | 关键参数 |
+    | --- | --- | --- | --- | --- |
+    | Chat Completions 对话 | POST | `/v1/chat/completions` | `application/json` | `model`*、`messages`*、`stream`、`temperature`、`max_tokens`、`top_p`、`stop`、`presence_penalty`、`frequency_penalty`、`tools`、`tool_choice` |
+    | Responses 对话 | POST | `/v1/responses` | `application/json` | `model`*、`input`*、`stream`、`store`、`max_output_tokens`、`temperature`、`top_p`、`reasoning.effort`、`tools`、`tool_choice` |
+
+    ### 绘画模型接口
+    | 能力 | Method | Path | 请求体 Content-Type | 关键参数 |
+    | --- | --- | --- | --- | --- |
+    | 文生图 | POST | `/v1/images/generations` | `application/json` | `model`*、`prompt`*、`n`、`response_format`、`aspect_ratio`、`resolution` |
+    | 图片编辑/图生图/多图合成 | POST | `/v1/images/edits` | `application/json` 或 `multipart/form-data` | `model`*、`prompt`*、`image`（单图）/`images`（多图，二选一）、`mask`、`n`、`response_format`、`aspect_ratio`、`resolution` |
+
+    （标 `*` 为必填参数）
+
+    ### 视频模型接口
+    | 能力 | Method | Path | 请求体 Content-Type | 关键参数 |
+    | --- | --- | --- | --- | --- |
+    | 视频生成（Sora 标准路径） | POST | `/v1/videos` | `application/json` | `model`*、`prompt`、`image`（单图）/`reference_images`（多图，二选一）、`duration`/`seconds`、`resolution`/`size`、`aspect_ratio` |
+    | 视频生成（兼容别名） | POST | `/v1/videos/generations`、`/v1/video/generations` | `application/json` | 同上 |
+    | 视频状态查询 | GET | `/v1/videos/{id}`、`/v1/video/generations/{id}` | - | 路径参数 `id` |
+    | 视频内容下载 | GET | `/v1/videos/{id}/content` | - | 路径参数 `id` |
+
+    视频生成的三条 POST 路径、状态查询的两条 GET 路径分别完全等价，只是路径
+    风格不同：`/v1/videos`、`/v1/videos/{id}` 对应 OpenAI 官方 Sora Video API
+    的路径约定（new-api 等中转程序把渠道配置为 "Sora"/"OpenAI" 类型时，固定
+    会用这个路径调用上游）；`/v1/videos/generations`、`/v1/video/generations`
+    是额外提供的兼容别名。响应体统一返回 OpenAI Sora 标准格式，详见下方视频
+    模型章节。
+
+    ## 鉴权
+    所有请求均需在请求头中携带 API Key：
+
+    ```
+    Authorization: Bearer <你的API Key>
+    ```
+  version: "1.2.0"
+servers:
+  - url: https://your-domain.example.com
+    description: API 服务地址（请替换为实际分配的域名，本文档中的路径均已包含 /v1 前缀）
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: 文本模型
+    description: Chat / Responses 对话接口
+  - name: 绘画模型
+    description: 图片生成与编辑接口
+  - name: 视频模型
+    description: 视频生成与状态查询接口
+
+paths:
+  /v1/chat/completions:
+    post:
+      tags: [文本模型]
+      summary: 文本对话（Chat Completions 协议）
+      description: |
+        标准 OpenAI Chat Completions 兼容接口，支持流式（SSE）与非流式响应，
+        支持文本+图片多模态输入（`content` 数组中的 `image_url` 项）。
+
+        **注意**：`grok-composer-2.5-fast`（及其别名 `grok-composer`/
+        `composer-2.5`）本身不支持直接接收图片输入，服务端会自动用
+        `grok-build-0.1` 先对图片生成文字描述，再把描述文本拼入对话上下文
+        转发给 composer 模型（对调用方透明，无需额外处理）；`grok-4.5` 不
+        支持 `presence_penalty`/`frequency_penalty`/`stop` 参数，携带时会被
+        服务端自动剔除后再转发。
+      operationId: createChatCompletion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatCompletionRequest'
+            examples:
+              基础对话:
+                value:
+                  model: grok-4.5
+                  messages:
+                    - role: user
+                      content: 你好，介绍一下你自己
+                  stream: false
+              流式对话:
+                value:
+                  model: grok-4.5
+                  messages:
+                    - role: system
+                      content: 你是一个乐于助人的助手
+                    - role: user
+                      content: 用一句话解释相对论
+                  stream: true
+                  temperature: 0.7
+              带图片输入:
+                value:
+                  model: grok-build-0.1
+                  messages:
+                    - role: user
+                      content:
+                        - type: text
+                          text: 描述一下这张图片
+                        - type: image_url
+                          image_url:
+                            url: https://example.com/photo.jpg
+                  stream: false
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatCompletionResponse'
+              example:
+                id: chatcmpl-abc123
+                object: chat.completion
+                created: 1730000000
+                model: grok-4.5
+                choices:
+                  - index: 0
+                    message:
+                      role: assistant
+                      content: 你好！我是 Grok，一个由 xAI 开发的对话助手。
+                    finish_reason: stop
+                usage:
+                  prompt_tokens: 12
+                  completion_tokens: 20
+                  total_tokens: 32
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  当 `stream=true` 时返回 SSE 流，每个事件为一个 `chat.completion.chunk` 对象，
+                  以 `data: [DONE]` 结束。
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /v1/responses:
+    post:
+      tags: [文本模型]
+      summary: 文本对话（Responses 协议）
+      description: |
+        标准 OpenAI Responses 兼容接口，支持工具调用、多模态输入（文本+图片）、
+        推理（reasoning）等能力，支持流式（SSE）与非流式响应。
+      operationId: createResponse
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResponsesRequest'
+            examples:
+              基础请求:
+                value:
+                  model: grok-4.5
+                  input:
+                    - type: message
+                      role: user
+                      content:
+                        - type: input_text
+                          text: 帮我写一首关于秋天的短诗
+                  stream: false
+                  store: false
+              带图片输入:
+                value:
+                  model: grok-4.3
+                  input:
+                    - type: message
+                      role: user
+                      content:
+                        - type: input_text
+                          text: 描述一下这张图片
+                        - type: input_image
+                          image_url: https://example.com/photo.jpg
+                  stream: false
+              带推理参数:
+                value:
+                  model: grok-4.20-0309-reasoning
+                  input:
+                    - type: message
+                      role: user
+                      content:
+                        - type: input_text
+                          text: 详细推导一下这个数学问题的解法
+                  reasoning:
+                    effort: high
+                  stream: false
+              带工具调用:
+                value:
+                  model: grok-4.5
+                  input:
+                    - type: message
+                      role: user
+                      content:
+                        - type: input_text
+                          text: 帮我搜索一下今天的新闻
+                  tools:
+                    - type: web_search
+                  tool_choice: auto
+                  stream: false
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResponsesResponse'
+              example:
+                id: resp_abc123
+                object: response
+                created_at: 1730000000
+                model: grok-4.5
+                status: completed
+                output:
+                  - type: message
+                    role: assistant
+                    content:
+                      - type: output_text
+                        text: 秋叶飘零染层林，风过山谷寄归心。
+                usage:
+                  input_tokens: 15
+                  output_tokens: 24
+                  total_tokens: 39
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  当 `stream=true` 时返回 SSE 流，事件类型包括
+                  `response.created`、`response.output_text.delta`、`response.completed` 等。
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /v1/images/generations:
+    post:
+      tags: [绘画模型]
+      summary: 文生图
+      description: |
+        根据文本提示词生成图片，仅支持 `application/json` 请求体。
+
+        返回格式默认是 **`b64_json`**（图片内容以 Base64 编码直接内嵌在响应体
+        `data[].b64_json` 字段中），而不是 xAI/OpenAI 官方默认的 `url`
+        （返回一个临时下载直链）。如果需要拿到 `url` 而不是 base64，
+        请显式传入 `response_format: "url"`。
+      operationId: createImageGeneration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImageGenerationRequest'
+            examples:
+              基础文生图（默认返回b64_json）:
+                value:
+                  model: grok-imagine
+                  prompt: 一只在草地上奔跑的柯基犬，卡通风格
+                  n: 1
+              显式要求返回url:
+                value:
+                  model: grok-imagine-image-quality
+                  prompt: 一只在草地上奔跑的柯基犬，卡通风格
+                  n: 1
+                  response_format: url
+              指定分辨率与宽高比:
+                value:
+                  model: grok-imagine-image-quality
+                  prompt: 一幅未来城市天际线的插画
+                  resolution: 2k
+                  aspect_ratio: "16:9"
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageResponse'
+              examples:
+                b64_json（默认）:
+                  value:
+                    data:
+                      - b64_json: iVBORw0KGgoAAAANSUhEUgAA...
+                        mime_type: image/jpeg
+                        revised_prompt: ""
+                    usage:
+                      cost_in_usd_ticks: 200000000
+                url（显式指定response_format=url时）:
+                  value:
+                    data:
+                      - url: https://imgen.x.ai/xai-imgen/xai-tmp-imgen-a73bae6f.jpeg
+                        mime_type: image/jpeg
+                        revised_prompt: ""
+                    usage:
+                      cost_in_usd_ticks: 200000000
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 当前分组无绘画权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /v1/images/edits:
+    post:
+      tags: [绘画模型]
+      summary: 图片编辑 / 图生图 / 多图合成
+      description: |
+        对已有图片进行局部重绘（配合 `mask`），或以一张/多张参考图为基础生成
+        新图。支持 `application/json`（图片以 URL/DataURL 传入）与
+        `multipart/form-data`（直接上传图片文件）两种请求方式。
+
+        与文生图接口一样，返回格式默认是 **`b64_json`**，需要 `url` 时显式
+        传入 `response_format: "url"`。
+
+        **单图 vs 多图（互斥字段）**：
+        - 单图用 `image` 字段（字符串或 `{"url": "..."}` 对象）
+        - 多图（多图合成/多参考图编辑，最多 3 张）用 **`images`** 字段（数组），
+          在 `prompt` 中可用 `<IMAGE_0>`、`<IMAGE_1>` 等占位符引用对应的图片
+        - `image` 与 `images` **不能同时出现**，服务端会按你实际传入的图片
+          数量自动归位到正确的字段（传 1 张归到 `image`，传多张归到
+          `images`），无论原始请求用的是哪个字段名（`image`/`images`/
+          旧版 `{"image_url": "..."}` 对象/纯字符串数组等）都会被自动规整。
+      operationId: createImageEdit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImageEditRequestJSON'
+            examples:
+              基于URL编辑单图:
+                value:
+                  model: grok-imagine-edit
+                  prompt: 把背景换成海边日落
+                  image: https://example.com/source.png
+                  mask:
+                    image_url: https://example.com/mask.png
+                  n: 1
+              多图合成（最多3张）:
+                value:
+                  model: grok-imagine-edit
+                  prompt: 让<IMAGE_0>里的人物穿上<IMAGE_1>里的衣服
+                  images:
+                    - https://example.com/person.png
+                    - https://example.com/shirt.png
+              显式要求返回url:
+                value:
+                  model: grok-imagine-edit
+                  prompt: 把背景换成海边日落
+                  image: https://example.com/source.png
+                  response_format: url
+              指定宽高比:
+                value:
+                  model: grok-imagine-edit
+                  prompt: 把背景换成海边日落
+                  image: https://example.com/source.png
+                  aspect_ratio: "1:1"
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ImageEditRequestMultipart'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageResponse'
+              examples:
+                b64_json（默认）:
+                  value:
+                    data:
+                      - b64_json: iVBORw0KGgoAAAANSUhEUgAA...
+                        mime_type: image/jpeg
+                        revised_prompt: ""
+                    usage:
+                      cost_in_usd_ticks: 220000000
+                url（显式指定response_format=url时）:
+                  value:
+                    data:
+                      - url: https://imgen.x.ai/xai-imgen/xai-tmp-imgen-10e0e1d1.jpeg
+                        mime_type: image/jpeg
+                        revised_prompt: ""
+                    usage:
+                      cost_in_usd_ticks: 220000000
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 当前分组无绘画权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /v1/videos:
+    post:
+      tags: [视频模型]
+      summary: 视频生成（OpenAI Sora 标准路径）
+      description: |
+        支持三种模式，由请求携带的字段决定，三选一、不可混用：
+
+        | 模式 | 触发字段 | `prompt` 要求 | 说明 |
+        | --- | --- | --- | --- |
+        | 文生视频（T2V） | 只有 `prompt` | 必填 | 纯文本描述生成视频 |
+        | 图生视频（I2V） | 单张 `image` | 可选（不传则仅根据图片生成） | 以该图片为起始帧生成动态视频 |
+        | 参考图生视频（R2V） | 多张 `image`/`images`/`reference_images` | 必填 | 以多张参考图的内容为 guide 生成视频（不锁定首帧），**仅 `grok-imagine-video` 支持**，`grok-imagine-video-1.5` 会被自动降级 |
+
+        该接口为异步任务：提交成功后返回任务信息（OpenAI Sora 标准的 video
+        对象），需通过 `GET /v1/videos/{id}` 轮询生成状态，完成后可直接从状态
+        响应的 `video_url` 字段获取下载直链，或调用
+        `GET /v1/videos/{id}/content` 下载视频文件二进制内容。
+
+        这是 OpenAI 官方 Sora Video API 的路径约定，也是 new-api 等中转程序把
+        渠道类型配置为 "Sora"/"OpenAI" 时固定请求上游的路径 —— 把本服务的地址
+        配置为该类渠道的 Base URL，即可把此处的视频能力接入 new-api 转发使用。
+        `/v1/videos/generations`、`/v1/video/generations` 是完全等价的兼容别名。
+
+        **多图格式兼容**：无论客户端传入的 `image`/`images`/`reference_images`/
+        `input_reference` 字段是纯字符串（URL）、字符串数组，还是
+        `{"url": "..."}` / `{"image_url": "..."}` 对象（数组），服务端都会
+        自动识别并转换为 xAI 官方要求的 `{"url": "..."}` 对象格式，单图归位到
+        `image`，多图归位到 `reference_images`，调用方无需手动拼接。
+      operationId: createVideo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VideoGenerationRequest'
+            examples:
+              文生视频:
+                value:
+                  model: grok-imagine-video
+                  prompt: 海浪拍打礁石，慢镜头，电影感
+                  resolution: 720p
+                  duration: 8
+              图生视频（单图，1.5支持）:
+                value:
+                  model: grok-imagine-video-1.5
+                  prompt: 让画面中的云朵缓慢飘动
+                  image: https://example.com/source.jpg
+                  resolution: 720p
+                  duration: 5
+              参考图生视频（多图，仅grok-imagine-video支持）:
+                value:
+                  model: grok-imagine-video
+                  prompt: 模特穿着参考图中的服装走秀
+                  reference_images:
+                    - url: https://example.com/model.jpg
+                    - url: https://example.com/outfit.jpg
+                  duration: 10
+                  resolution: 720p
+              new-api风格多图（自动转换为reference_images）:
+                value:
+                  model: sora-2-pro
+                  prompt: 模特穿着参考图中的服装走秀
+                  images:
+                    - https://example.com/model.jpg
+                    - https://example.com/outfit.jpg
+                  seconds: "10"
+              Sora风格请求（经new-api转发）:
+                value:
+                  model: sora-2
+                  prompt: 一只猫在阳光下打盹
+                  size: 1280x720
+                  seconds: "8"
+      responses:
+        '200':
+          description: 任务已提交
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoObject'
+              example:
+                id: video-req-abc123
+                object: video
+                model: grok-imagine-video
+                status: queued
+                progress: 0
+                created_at: 1730000000
+                seconds: "8"
+                size: "1280x720"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 当前分组无绘画/视频生成权限
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /v1/videos/generations:
+    post:
+      tags: [视频模型]
+      summary: 视频生成（兼容别名，等价于 POST /v1/videos）
+      description: 与 `POST /v1/videos` 完全等价，仅路径风格不同，保留用于兼容早期集成。支持的参数与请求模式完全一致。
+      operationId: createVideoGenerationLegacy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VideoGenerationRequest'
+      responses:
+        '200':
+          description: 任务已提交
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoObject'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /v1/video/generations:
+    post:
+      tags: [视频模型]
+      summary: 视频生成（兼容别名，等价于 POST /v1/videos）
+      description: |
+        与 `POST /v1/videos` 完全等价。部分中转程序（如 new-api）自身对外暴露的
+        旧版任务提交路径使用的就是这个单数 `video` 的写法，这里一并支持。
+        支持的参数与请求模式完全一致。
+      operationId: createVideoGenerationAlias
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VideoGenerationRequest'
+      responses:
+        '200':
+          description: 任务已提交
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoObject'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /v1/videos/{id}:
+    get:
+      tags: [视频模型]
+      summary: 查询视频生成状态/结果
+      description: |
+        使用生成接口返回的任务 `id` 轮询视频生成进度。响应体为 OpenAI Sora
+        标准的 video 对象，`status` 取值为 `queued`/`in_progress`/`completed`/`failed`。
+
+        当 `status` 为 `completed` 时，响应体会额外携带 `video_url` 字段，
+        直接给出视频的临时下载直链（xAI 侧的直链有效期有限，请及时下载或
+        转存）。也可以选择改用 `GET /v1/videos/{id}/content` 由服务端代理
+        下载二进制内容。`GET /v1/video/generations/{id}` 为等价别名。
+      operationId: getVideo
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 视频生成任务 ID（创建视频时返回的 `id`）
+          schema:
+            type: string
+          example: video-req-abc123
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoObject'
+              examples:
+                排队中:
+                  value:
+                    id: video-req-abc123
+                    object: video
+                    status: queued
+                    progress: 0
+                生成中:
+                  value:
+                    id: video-req-abc123
+                    object: video
+                    model: grok-imagine-video
+                    status: in_progress
+                    progress: 45
+                生成完成:
+                  value:
+                    id: video-req-abc123
+                    object: video
+                    model: grok-imagine-video
+                    status: completed
+                    progress: 100
+                    completed_at: 1730000120
+                    seconds: "8"
+                    video_url: https://vidgen.x.ai/xxxxx/video.mp4
+                生成失败:
+                  value:
+                    id: video-req-abc123
+                    object: video
+                    status: failed
+                    progress: 0
+                    error:
+                      message: 内容审核未通过
+                      code: invalid_argument
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: 任务不存在或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /v1/video/generations/{id}:
+    get:
+      tags: [视频模型]
+      summary: 查询视频生成状态/结果（兼容别名，等价于 GET /v1/videos/{id}）
+      operationId: getVideoAlias
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: video-req-abc123
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoObject'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: 任务不存在或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /v1/videos/{id}/content:
+    get:
+      tags: [视频模型]
+      summary: 下载视频内容
+      description: |
+        视频生成状态变为 `completed` 后，调用该接口以二进制流形式下载视频文件
+        （`Content-Type: video/mp4`）。如果任务尚未完成会返回 400 错误。
+
+        效果与直接使用状态查询响应里的 `video_url` 下载相同，区别是这里由
+        服务端代为转发，不直接暴露 xAI 的临时直链和 Bearer token。
+      operationId: getVideoContent
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 视频生成任务 ID
+          schema:
+            type: string
+          example: video-req-abc123
+      responses:
+        '200':
+          description: 视频文件二进制内容
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: 视频尚未生成完成
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: 任务不存在或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+      description: "在请求头中传入 `Authorization: Bearer <你的API Key>`"
+
+  responses:
+    BadRequest:
+      description: 请求参数错误（响应体透传上游 xAI 的真实错误信息）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: API Key 缺失或无效
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RateLimited:
+      description: 请求过于频繁或额度不足，响应头可能包含 `Retry-After`
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ServerError:
+      description: 服务端或上游错误
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            type:
+              type: string
+              example: invalid_request_error
+            message:
+              type: string
+              example: model is required
+
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant, tool]
+          description: 消息角色
+        content:
+          description: 文本内容，或多模态内容数组（文本+图片）
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: object
+                properties:
+                  type:
+                    type: string
+                    enum: [text, image_url]
+                    description: 内容块类型
+                  text:
+                    type: string
+                    description: 当 type=text 时使用，文本内容
+                  image_url:
+                    type: object
+                    description: 当 type=image_url 时使用
+                    properties:
+                      url:
+                        type: string
+                        description: 图片的 https URL 或 data URL（base64）
+
+    ChatCompletionRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model:
+          type: string
+          description: 文本模型 ID，见顶部支持模型列表（必填）
+          example: grok-4.5
+        messages:
+          type: array
+          description: 对话消息列表（必填，至少一条）
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+        stream:
+          type: boolean
+          default: false
+          description: 是否使用 SSE 流式返回
+        temperature:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 2
+          description: 采样温度，值越大输出越随机，值越小输出越确定
+        max_tokens:
+          type: integer
+          minimum: 1
+          description: 最大输出 token 数
+        top_p:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: 核采样阈值，与 temperature 通常二选一调整
+        stop:
+          description: |
+            停止序列，字符串或字符串数组（`grok-4.5` 不支持，携带会被
+            服务端自动剔除后再转发）
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        presence_penalty:
+          type: number
+          format: float
+          minimum: -2
+          maximum: 2
+          description: 存在惩罚，正值降低模型重复提及相同话题的倾向（`grok-4.5` 不支持，携带会被自动剔除）
+        frequency_penalty:
+          type: number
+          format: float
+          minimum: -2
+          maximum: 2
+          description: 频率惩罚，正值降低模型逐字重复的倾向（`grok-4.5` 不支持，携带会被自动剔除）
+        tools:
+          type: array
+          description: 可用工具定义（Function Calling）
+          items:
+            type: object
+        tool_choice:
+          description: 工具选择策略
+          oneOf:
+            - type: string
+              enum: [auto, none, required]
+            - type: object
+
+    ChatCompletionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          example: chat.completion
+        created:
+          type: integer
+        model:
+          type: string
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index:
+                type: integer
+              message:
+                type: object
+                properties:
+                  role:
+                    type: string
+                  content:
+                    type: string
+              finish_reason:
+                type: string
+                enum: [stop, length, tool_calls, content_filter]
+        usage:
+          type: object
+          properties:
+            prompt_tokens:
+              type: integer
+            completion_tokens:
+              type: integer
+            total_tokens:
+              type: integer
+
+    ResponsesInputContentItem:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [input_text, input_image]
+        text:
+          type: string
+          description: 当 type=input_text 时必填
+        image_url:
+          type: string
+          description: 当 type=input_image 时必填，支持 https URL 或 data URL
+
+    ResponsesInputItem:
+      type: object
+      required: [type, role, content]
+      properties:
+        type:
+          type: string
+          enum: [message]
+        role:
+          type: string
+          enum: [system, user, assistant]
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResponsesInputContentItem'
+
+    ResponsesRequest:
+      type: object
+      required: [model, input]
+      properties:
+        model:
+          type: string
+          description: 文本模型 ID，见顶部支持模型列表（必填）
+          example: grok-4.5
+        input:
+          type: array
+          description: 输入消息列表（必填）
+          items:
+            $ref: '#/components/schemas/ResponsesInputItem'
+        stream:
+          type: boolean
+          default: false
+          description: 是否使用 SSE 流式返回
+        store:
+          type: boolean
+          default: false
+          description: 是否在服务端保存本次响应（用于后续多轮引用，配合 previous_response_id 使用）
+        max_output_tokens:
+          type: integer
+          minimum: 1
+          description: 最大输出 token 数
+        temperature:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 2
+          description: 采样温度
+        top_p:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: 核采样阈值
+        reasoning:
+          type: object
+          description: 推理相关参数，仅推理类模型（如 `grok-4.20-0309-reasoning`）生效；`grok-composer` 系列模型不支持，携带会被自动剔除
+          properties:
+            effort:
+              type: string
+              enum: [low, medium, high]
+              description: 推理强度，越高越深入但耗时越长
+        tools:
+          type: array
+          description: |
+            工具定义，支持类型：`code_execution`、`code_interpreter`、
+            `collections_search`、`file_search`、`function`、`mcp`、`shell`、
+            `web_search`、`x_search`
+          items:
+            type: object
+        tool_choice:
+          description: 工具选择策略
+          oneOf:
+            - type: string
+              enum: [auto, none, required]
+            - type: object
+
+    ResponsesOutputItem:
+      type: object
+      properties:
+        type:
+          type: string
+          example: message
+        role:
+          type: string
+          example: assistant
+        content:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                example: output_text
+              text:
+                type: string
+
+    ResponsesResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          example: response
+        created_at:
+          type: integer
+        model:
+          type: string
+        status:
+          type: string
+          enum: [completed, in_progress, failed, incomplete]
+        output:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResponsesOutputItem'
+        usage:
+          type: object
+          properties:
+            input_tokens:
+              type: integer
+            output_tokens:
+              type: integer
+            total_tokens:
+              type: integer
+
+    ImageGenerationRequest:
+      type: object
+      required: [model, prompt]
+      properties:
+        model:
+          type: string
+          enum: [grok-imagine, grok-imagine-image, grok-imagine-image-quality]
+          description: 绘画模型 ID（必填）。`grok-imagine` 会被自动映射为 `grok-imagine-image-quality`
+          example: grok-imagine
+        prompt:
+          type: string
+          description: 图片描述提示词（必填）
+        n:
+          type: integer
+          default: 1
+          minimum: 1
+          maximum: 10
+          description: 生成图片数量，取值范围 1-10
+        response_format:
+          type: string
+          enum: [url, b64_json]
+          default: b64_json
+          description: |
+            返回格式。**默认值为 `b64_json`**（本服务的默认行为，区别于
+            xAI/OpenAI 官方默认的 `url`）：
+            - `b64_json`：图片内容以 Base64 字符串形式内嵌在响应体的
+              `data[].b64_json` 字段（默认，无需额外请求即可拿到图片数据）
+            - `url`：响应体的 `data[].url` 字段返回一个临时下载直链（有时效性）
+        size:
+          type: string
+          description: |
+            期望的图片像素尺寸，如 `1024x1024`、`1024x1792` 等
+            （仅用于计费分档参考，转发到上游前会被剔除，不影响实际出图效果；
+            如需控制画质/分辨率请使用下方 `resolution` 参数）
+          example: 1024x1024
+        resolution:
+          type: string
+          enum: [1k, 2k]
+          description: |
+            xAI 原生分辨率参数，控制输出图片的像素规格：
+            - `1k`：约 1024px 级别分辨率
+            - `2k`：约 2048px 级别分辨率
+        aspect_ratio:
+          type: string
+          enum: ["1:1", "3:4", "4:3", "9:16", "16:9", "2:3", "3:2", "9:19.5", "19.5:9", "9:20", "20:9", "1:2", "2:1", auto]
+          description: |
+            图片宽高比，`auto` 由模型根据提示词自动选择最合适的比例。
+            完整支持的取值：`1:1`（正方形，社媒/缩略图）、`16:9`/`9:16`
+            （宽屏/竖屏，移动端/故事）、`4:3`/`3:4`（演示/人像）、`3:2`/`2:3`
+            （摄影常用比例）、`2:1`/`1:2`（横幅/页头）、`19.5:9`/`9:19.5`
+            （现代智能手机屏幕）、`20:9`/`9:20`（超宽屏）、`auto`（模型自选）
+
+    ImageEditRequestJSON:
+      type: object
+      required: [model, prompt]
+      properties:
+        model:
+          type: string
+          enum: [grok-imagine-edit]
+          description: 绘画模型 ID（必填）
+        prompt:
+          type: string
+          description: 编辑指令描述（必填）。多图合成场景下可用 `<IMAGE_0>`、`<IMAGE_1>` 等占位符引用 `images` 数组中对应位置的图片
+        image:
+          description: |
+            **单图**输入。支持字符串或对象形式，与 `images` 字段互斥
+            （只能二选一，不可同时出现）。
+          oneOf:
+            - type: string
+              description: 图片的 URL 或 base64 data URL
+            - type: object
+              description: 单张图片的对象形式
+              properties:
+                url:
+                  type: string
+                  description: 图片的公网 URL 或 base64 data URL（JPEG/PNG/WebP），与 file_id 二选一
+                image_url:
+                  type: string
+                  description: 兼容旧版键名，等价于 url
+                file_id:
+                  type: string
+                  description: Files API 上传后得到的文件 ID，与 url 互斥
+        images:
+          type: array
+          maxItems: 3
+          description: |
+            **多图**输入（多图合成/多参考图编辑），最多 3 张，与 `image`
+            字段互斥（只能二选一，不可同时出现）。数组元素支持字符串或对象
+            两种写法混用；在 `prompt` 中可用 `<IMAGE_0>`、`<IMAGE_1>` 等
+            占位符按顺序引用对应的图片。默认输出宽高比跟随第一张输入图片，
+            可用 `aspect_ratio` 覆盖。
+          items:
+            oneOf:
+              - type: string
+                description: 图片的 URL 或 base64 data URL
+              - type: object
+                properties:
+                  url:
+                    type: string
+                  image_url:
+                    type: string
+                    description: 兼容旧版键名，等价于 url
+                  file_id:
+                    type: string
+        mask:
+          type: object
+          description: 蒙版图（可选），指定需要重绘的区域，仅单图编辑（`image`）时有意义
+          properties:
+            image_url:
+              type: string
+              description: 蒙版图的 URL 或 base64 data URL
+        n:
+          type: integer
+          default: 1
+          minimum: 1
+          description: 生成图片数量
+        response_format:
+          type: string
+          enum: [url, b64_json]
+          default: b64_json
+          description: |
+            返回格式。**默认值为 `b64_json`**（本服务的默认行为），显式传
+            `"url"` 可改为返回临时下载链接，与 `/v1/images/generations`
+            行为一致。
+        size:
+          type: string
+          description: 期望的图片尺寸（仅用于计费分档参考，转发前会被剔除，不影响实际出图效果）
+        aspect_ratio:
+          type: string
+          enum: ["1:1", "3:4", "4:3", "9:16", "16:9", "2:3", "3:2", "9:19.5", "19.5:9", "9:20", "20:9", "1:2", "2:1", auto]
+          description: |
+            图片宽高比。单图编辑时默认跟随输入图片的宽高比；多图合成时默认
+            跟随 `images` 数组中第一张图片，可显式传该参数覆盖默认值。
+        resolution:
+          type: string
+          enum: [1k, 2k]
+          description: xAI 原生分辨率参数，控制输出图片的像素规格
+
+    ImageEditRequestMultipart:
+      type: object
+      required: [model, prompt, image]
+      properties:
+        model:
+          type: string
+          example: grok-imagine-edit
+          description: 绘画模型 ID（必填）
+        prompt:
+          type: string
+          description: 编辑指令描述（必填）
+        image:
+          type: string
+          format: binary
+          description: 原图文件（可重复传入 `image[0]`、`image[1]` 等字段传多张图，最多 3 张，实现多图合成）
+        mask:
+          type: string
+          format: binary
+          description: 蒙版图文件（可选，仅单图编辑时有意义）
+        size:
+          type: string
+          description: 期望的图片尺寸（仅用于计费分档参考，转发前会被剔除）
+        n:
+          type: integer
+          description: 生成图片数量
+        response_format:
+          type: string
+          enum: [url, b64_json]
+          default: b64_json
+          description: 返回格式，默认 `b64_json`，可显式传 `url` 改为临时下载链接
+
+    ImageResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          description: 生成图片对象列表
+          items:
+            type: object
+            properties:
+              url:
+                type: string
+                description: 生成图片的临时下载地址（仅当请求 response_format=url 时返回，与 b64_json 二选一）
+              b64_json:
+                type: string
+                description: Base64 编码的图片内容，不含 data URI 前缀（默认返回，除非请求显式指定 response_format=url，与 url 二选一）
+              mime_type:
+                type: string
+                description: 生成图片的 MIME 类型，如 `image/jpeg`、`image/png`、`image/webp`
+              revised_prompt:
+                type: string
+                description: 模型实际使用的（可能被优化过的）提示词
+        usage:
+          type: object
+          description: 本次请求的计费信息
+          properties:
+            cost_in_usd_ticks:
+              type: integer
+              description: 费用（USD ticks 计价单位；1 美分 = 100,000,000 ticks）
+
+    VideoGenerationRequest:
+      type: object
+      required: [model]
+      properties:
+        model:
+          type: string
+          description: |
+            视频模型 ID，见顶部支持模型列表（必填）。也接受 `sora-2`/
+            `sora-2-pro`（自动映射为 `grok-imagine-video`/
+            `grok-imagine-video-1.5`），方便直接对接以 OpenAI Sora 模型名
+            请求的中转程序。若请求携带多张参考图（`reference_images`/多图
+            `image`/`images`），无论指定哪个模型，都会被自动改用
+            `grok-imagine-video` 转发。
+          enum: [grok-imagine-video, grok-imagine-video-1.5, sora-2, sora-2-pro]
+          example: grok-imagine-video-1.5
+        prompt:
+          type: string
+          description: |
+            视频内容描述提示词。文生视频（T2V）和参考图生视频（R2V）模式下
+            必填；图生视频（I2V，单图）模式下可选——不提供时模型仅根据图片
+            内容生成视频。
+        resolution:
+          type: string
+          enum: [480p, 720p, 1080p]
+          default: 480p
+          description: |
+            视频分辨率（Grok 原生参数）。`1080p` 仅 `grok-imagine-video-1.5`
+            的图生视频模式支持。
+        duration:
+          type: integer
+          minimum: 1
+          maximum: 15
+          default: 8
+          description: |
+            视频时长（秒，Grok 原生参数），取值范围 1-15，默认 8 秒。使用
+            参考图（`reference_images`/多图）时最大只允许 10 秒。同时支持
+            数字（`8`）与字符串（`"8"`）两种写法。
+        aspect_ratio:
+          type: string
+          enum: ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"]
+          default: "16:9"
+          description: |
+            视频宽高比。图生视频（I2V）默认继承输入图片的宽高比，除非显式
+            指定该参数覆盖；若同时指定该参数会拉伸图片以匹配目标比例。
+        size:
+          type: string
+          description: |
+            OpenAI Sora 风格的像素尺寸（如 `1280x720`），作为 `resolution`
+            的等价别名，两者任选其一即可。
+          example: 1280x720
+        seconds:
+          type: string
+          description: OpenAI Sora 风格的时长（字符串），作为 `duration` 的等价别名，效果和取值范围完全相同。
+          example: "8"
+        image:
+          description: |
+            输入图片，决定图生视频（单图）或参考图生视频（多图）模式，与
+            `reference_images`/`images` 三个字段等价（服务端会统一按数量归位
+            到互斥的 `image`/`reference_images` 字段再转发）：
+            - 提供单张图片（字符串或对象）→ 图生视频（I2V），该图作为起始帧
+            - 提供多张图片（数组，最多 7 张）→ 参考图生视频（R2V），内容作为
+              视觉参考、不锁定首帧，**仅 `grok-imagine-video` 支持**
+            - 不提供 → 纯文生视频（T2V）
+
+            单个元素支持字符串 URL/DataURL，或 `{"url": "..."}` /
+            `{"image_url": "..."}` 对象；new-api 等中转程序常用的纯字符串数组
+            （`["url1", "url2"]`）也会被自动识别并转换。
+          oneOf:
+            - type: string
+              description: 图片 URL 或 data URL（单图，图生视频）
+            - type: object
+              description: 单图对象形式
+              properties:
+                url:
+                  type: string
+                  description: 图片的公网 URL 或 base64 data URL（JPEG/PNG/WebP），与 file_id 二选一
+                image_url:
+                  type: string
+                  description: 兼容旧版键名，等价于 url
+                file_id:
+                  type: string
+                  description: Files API 上传后得到的文件 ID
+            - type: array
+              description: 多图数组（参考图生视频），数组元素可以是字符串或对象
+              maxItems: 7
+              items:
+                oneOf:
+                  - type: string
+                  - type: object
+                    properties:
+                      url:
+                        type: string
+                      image_url:
+                        type: string
+                      file_id:
+                        type: string
+        images:
+          description: |
+            **推荐用于传多图**：与 `image`（多图写法）/`reference_images`
+            等价的别名字段（new-api 等中转程序的多图字段通常就叫这个名字），
+            数组形式，最多 7 张，效果与传入数组形式的 `image` 完全相同，
+            会被服务端统一规整为 xAI 官方的 `reference_images` 格式转发。
+          type: array
+          maxItems: 7
+          items:
+            oneOf:
+              - type: string
+              - type: object
+                properties:
+                  url:
+                    type: string
+                  image_url:
+                    type: string
+                  file_id:
+                    type: string
+        reference_images:
+          description: |
+            xAI 官方参考图生视频（R2V）字段名，效果与传入数组形式的
+            `image`/`images` 完全相同。xAI 官方要求数组元素固定为
+            `{"url": "..."}` 对象；本服务额外兼容元素为纯字符串的写法并
+            自动转换成对象格式。最多 7 张。
+          type: array
+          maxItems: 7
+          items:
+            type: object
+            properties:
+              url:
+                type: string
+              image_url:
+                type: string
+                description: 兼容旧版键名，等价于 url
+        input_reference:
+          description: OpenAI Sora 风格的参考图字段，作为 `image` 的等价别名（单图/多图写法均兼容）。
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+
+    VideoObject:
+      type: object
+      description: |
+        OpenAI Sora 标准的视频对象。视频生成接口、状态查询接口统一返回该结构。
+        `status` 为 `completed` 后额外携带 `video_url` 字段（本服务在标准
+        Sora 字段基础上的扩展，方便直接拿到下载直链而无需再调用
+        `GET /v1/videos/{id}/content`）。
+      properties:
+        id:
+          type: string
+          description: 视频生成任务 ID，用于后续状态查询与内容下载
+        object:
+          type: string
+          example: video
+        model:
+          type: string
+          description: 实际使用的模型；生成任务失败（status=failed）时该字段可能缺省
+        status:
+          type: string
+          enum: [queued, in_progress, completed, failed]
+          description: |
+            任务状态：`queued`（排队中，对应 xAI 原生 pending 且未开始处理）、
+            `in_progress`（生成中）、`completed`（已完成）、`failed`（失败或已过期）
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: 生成进度百分比（0-100），完成后固定为 100，失败时可能缺省
+        created_at:
+          type: integer
+          description: 任务创建时间（Unix 时间戳）
+        completed_at:
+          type: integer
+          description: 任务完成时间（Unix 时间戳），仅 `completed` 状态返回
+        seconds:
+          type: string
+          description: 视频实际时长（秒）
+        size:
+          type: string
+          description: 视频尺寸（近似值，由分辨率档位换算，仅供展示参考）
+        video_url:
+          type: string
+          description: 视频下载直链（xAI 侧的临时链接，有时效性，建议尽快下载或转存），仅 `completed` 状态返回
+        error:
+          type: object
+          description: 生成失败后返回
+          properties:
+            message:
+              type: string
+              description: 错误信息
+            code:
+              type: string
+              description: |
+                错误代码，常见取值：`invalid_argument`（请求参数无效，如
+                不支持的时长/图片格式/模式冲突/内容被审核拦截）、
+                `permission_denied`（API Key 或团队无权限）、
+                `failed_precondition`（当前模型/设置不支持该操作）、
+                `service_unavailable`（服务临时过载）、
+                `internal_error`（内部错误）、`expired`（任务已过期）

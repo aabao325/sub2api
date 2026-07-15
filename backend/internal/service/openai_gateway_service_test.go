@@ -3130,6 +3130,31 @@ func TestHandleErrorResponseCyberPolicyPassthrough(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, mark.UpstreamStatus)
 }
 
+// TestHandleErrorResponsePassesThroughPlain400 covers the general (non
+// cyber-policy) 400 case: a client-input problem like an invalid image URL
+// or bad parameter. This must surface the real upstream status code and
+// message instead of being rewrapped into a generic 502 "Upstream request
+// failed" — that misleads the client into thinking it's a gateway/infra
+// failure and retrying, when the request itself needs fixing.
+func TestHandleErrorResponsePassesThroughPlain400(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+	upstreamBody := `{"code":"invalid-argument","error":"Downloaded response does not contain a valid JPG, PNG, WebP, or ICO image."}`
+	resp := &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header:     http.Header{"Content-Type": []string{"application/json"}, "X-Request-Id": []string{"rid"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}
+	_, err := svc.handleErrorResponse(context.Background(), resp, c, &Account{ID: 1, Platform: PlatformGrok, Name: "a"}, nil)
+	require.Error(t, err)
+	require.Equal(t, http.StatusBadRequest, rec.Code, "must pass through the real upstream status code, not rewrap to 502")
+	require.Equal(t, upstreamBody, rec.Body.String(), "must pass through the real upstream body")
+	require.NotContains(t, rec.Body.String(), "Upstream request failed")
+}
+
 func TestHandleCompatErrorResponseCyberPolicyEarlyReturn(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := &OpenAIGatewayService{cfg: &config.Config{}}

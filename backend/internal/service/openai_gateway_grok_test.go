@@ -735,7 +735,6 @@ func TestForwardGrokMediaVideoStatusUsesGETWithoutBody(t *testing.T) {
 	require.Equal(t, "xai-video-req", result.RequestID)
 }
 
-<<<<<<< Updated upstream
 func TestForwardGrokMediaVideoMutationEndpoints(t *testing.T) {
 	t.Setenv(xai.EnvAllowUnsafeURLOverrides, "true")
 	gin.SetMode(gin.TestMode)
@@ -775,7 +774,10 @@ func TestForwardGrokMediaVideoMutationEndpoints(t *testing.T) {
 			require.Equal(t, "video-mutation-123", result.ResponseID)
 			require.Equal(t, 1, result.VideoCount)
 			require.Equal(t, 6, result.VideoDurationSeconds)
-=======
+		})
+	}
+}
+
 func TestBuildGrokVideoSoraGenerationResponse(t *testing.T) {
 	body := buildGrokVideoSoraGenerationResponse("video-request-123", "grok-imagine-video", GrokMediaRequestInfo{
 		Resolution:      VideoBillingResolution720P,
@@ -835,13 +837,10 @@ func TestBuildGrokVideoSoraStatusResponseMapsXAIStatuses(t *testing.T) {
 			require.Equal(t, "video", gjson.GetBytes(out, "object").String())
 			require.Equal(t, tt.wantStatus, gjson.GetBytes(out, "status").String())
 			require.Equal(t, tt.wantError, gjson.GetBytes(out, "error").Exists())
->>>>>>> Stashed changes
 		})
 	}
 }
 
-<<<<<<< Updated upstream
-=======
 func TestForwardGrokMediaVideoContentStreamsDownloadedBytes(t *testing.T) {
 	t.Setenv(xai.EnvAllowUnsafeURLOverrides, "true")
 	gin.SetMode(gin.TestMode)
@@ -921,7 +920,6 @@ func TestForwardGrokMediaVideoContentRejectsWhenNotReady(t *testing.T) {
 	require.Len(t, upstream.requests, 1)
 }
 
->>>>>>> Stashed changes
 func TestBindGrokMediaVideoRequestAccountUsesRequestIDStickyHash(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(7)

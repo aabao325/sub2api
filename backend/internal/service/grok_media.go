@@ -325,15 +325,11 @@ func (e GrokMediaEndpoint) upstreamURL(baseURL, requestID string) (string, error
 		return xai.BuildImagesEditsURL(baseURL)
 	case GrokMediaEndpointVideosGenerations:
 		return xai.BuildVideosGenerationsURL(baseURL)
-<<<<<<< Updated upstream
 	case GrokMediaEndpointVideosEdits:
 		return xai.BuildVideosEditsURL(baseURL)
 	case GrokMediaEndpointVideosExtensions:
 		return xai.BuildVideosExtensionsURL(baseURL)
-	case GrokMediaEndpointVideoStatus:
-=======
 	case GrokMediaEndpointVideoStatus, GrokMediaEndpointVideoContent:
->>>>>>> Stashed changes
 		return xai.BuildVideoURL(baseURL, requestID)
 	default:
 		return "", fmt.Errorf("unsupported grok media endpoint: %s", e)

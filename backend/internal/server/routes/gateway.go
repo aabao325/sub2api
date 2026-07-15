@@ -84,7 +84,6 @@ func RegisterGatewayRoutes(
 			},
 		})
 	}
-<<<<<<< Updated upstream
 	videoEditHandler := func(c *gin.Context) {
 		if getGroupPlatform(c) == service.PlatformGrok {
 			h.OpenAIGateway.GrokVideoEdit(c)
@@ -100,7 +99,7 @@ func RegisterGatewayRoutes(
 		}
 		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
 		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"type": "not_found_error", "message": "Videos API is not supported for this platform"}})
-=======
+	}
 	// videoContentHandler 对应 OpenAI/Sora 视频协议里的 GET /v1/videos/{id}/content。
 	// new-api 等中转程序把 sub2api 配置为 "Sora 渠道" 上游时，其任务适配器固定
 	// 会请求这个端点来下载生成完成的视频二进制内容。
@@ -116,7 +115,6 @@ func RegisterGatewayRoutes(
 				"message": "Videos API is not supported for this platform",
 			},
 		})
->>>>>>> Stashed changes
 	}
 	// API网关（Claude API兼容）
 	gateway := r.Group("/v1")
